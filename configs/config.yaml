@@ -1,0 +1,36 @@
+# Vinahost WAF Configuration
+
+server:
+  listen_addr: ":8080"
+  workers: 4
+  read_timeout: 30
+  write_timeout: 30
+  idle_timeout: 120
+
+proxy:
+  upstream_url: "http://localhost:8081"
+  proxy_timeout: 60
+  max_idle_conns: 100
+  max_idle_conns_per_host: 10
+  enable_https: false
+  tls_cert_file: ""
+  tls_key_file: ""
+
+waf:
+  rules_files:
+    - "configs/rules/coreruleset.conf"
+    - "configs/rules/custom.conf"
+  request_body_access: true
+  request_body_limit: 13631488  # 13MB
+  response_body_access: true
+  response_body_limit: 524288   # 512KB
+  audit_log_enabled: true
+  audit_log_file: "/var/log/vinahost-waf/audit.log"
+  debug_log_enabled: false
+  debug_log_level: 0
+  default_action: "block"  # "block" or "log"
+
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "json"  # json or console
+  output_path: "/var/log/vinahost-waf/waf.log"

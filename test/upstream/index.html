@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Upstream Server</title>
+</head>
+<body>
+    <h1>Welcome to Vinahost WAF Test Server</h1>
+    <p>This is a test upstream server for WAF testing.</p>
+    <ul>
+        <li><a href="/">Home</a></li>
+        <li><a href="/admin">Admin (should be blocked)</a></li>
+        <li><a href="/?id=1' OR '1'='1">SQL Injection Test (should be blocked)</a></li>
+        <li><a href="/?q=<script>alert('xss')</script>">XSS Test (should be blocked)</a></li>
+    </ul>
+</body>
+</html>

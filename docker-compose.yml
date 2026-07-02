@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  waf:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./configs:/app/configs:ro
+      - waf-logs:/var/log/vinahost-waf
+    environment:
+      - LOG_LEVEL=info
+    depends_on:
+      - upstream
+    networks:
+      - waf-network
+    restart: unless-stopped
+
+  # Example upstream server for testing
+  upstream:
+    image: nginx:alpine
+    ports:
+      - "8081:80"
+    volumes:
+      - ./test/upstream:/usr/share/nginx/html:ro
+    networks:
+      - waf-network
+    restart: unless-stopped
+
+volumes:
+  waf-logs:
+
+networks:
+  waf-network:
+    driver: bridge
