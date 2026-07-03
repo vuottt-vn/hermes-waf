@@ -34,7 +34,9 @@ COPY --from=builder /waf /app/waf
 COPY configs /app/configs
 
 # Create log directory and certs directory
-RUN mkdir -p /var/log/vinahost-waf /app/certs && chown -R wafuser:wafuser /var/log/vinahost-waf /app/certs
+RUN mkdir -p /var/log/vinahost-waf /app/certs && \
+    chown -R wafuser:wafuser /var/log/vinahost-waf /app/certs && \
+    chmod -R 755 /app/configs
 
 # Switch to non-root user
 USER wafuser

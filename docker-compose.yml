@@ -53,6 +53,16 @@ services:
       - waf-network
     restart: unless-stopped
 
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "3002:80"
+    depends_on:
+      - waf
+    networks:
+      - waf-network
+    restart: unless-stopped
+
 volumes:
   waf-logs:
   waf-certs:
