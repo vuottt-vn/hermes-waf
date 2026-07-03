@@ -30,6 +30,25 @@ waf:
   debug_log_level: 0
   default_action: "block"  # "block" or "log"
 
+cache:
+  enabled: true
+  type: "redis"       # "redis" or "memory"
+  addr: "redis:6379"  # Redis container hostname in docker-compose
+  password: ""
+  db: 0
+  prefix: "vinahost-waf:"
+  ttl: 300            # seconds
+
+storage:
+  enabled: true
+  type: "postgres"    # "postgres" or "memory"
+  host: "postgres"    # PostgreSQL container hostname in docker-compose
+  port: 5432
+  user: "waf"
+  password: "waf_password"
+  dbname: "vinahost_waf"
+  sslmode: "disable"
+
 logging:
   level: "info"  # debug, info, warn, error
   format: "json"  # json or console

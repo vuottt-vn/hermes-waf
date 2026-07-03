@@ -10,9 +10,23 @@ import (
 // Config represents the main configuration structure
 type Config struct {
 	Server  ServerConfig  `yaml:"server"`
+	TLS     TLSConfig     `yaml:"tls"`
 	Proxy   ProxyConfig   `yaml:"proxy"`
 	WAF     WAFConfig     `yaml:"waf"`
+	Cache   CacheConfig   `yaml:"cache"`
+	Storage StorageConfig `yaml:"storage"`
 	Logging LoggingConfig `yaml:"logging"`
+}
+
+// TLSConfig contains TLS/SSL settings for the WAF listener
+type TLSConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	ListenAddr  string `yaml:"listen_addr"`
+	CertDir     string `yaml:"cert_dir"`
+	ACMEEmail   string `yaml:"acme_email"`
+	ACMEDirURL  string `yaml:"acme_dir_url"`
+	AcceptTOS   bool   `yaml:"accept_tos"`
+	HTTP01Addr  string `yaml:"http01_addr"` // address for ACME HTTP-01 challenge server
 }
 
 // ServerConfig contains HTTP server settings
@@ -47,6 +61,29 @@ type WAFConfig struct {
 	DebugLogEnabled   bool     `yaml:"debug_log_enabled"`
 	DebugLogLevel     int      `yaml:"debug_log_level"`
 	DefaultAction     string   `yaml:"default_action"` // "block" or "log"
+}
+
+// CacheConfig contains cache settings
+type CacheConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Type     string `yaml:"type"` // "redis" or "memory"
+	Addr     string `yaml:"addr"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+	Prefix   string `yaml:"prefix"`
+	TTL      int    `yaml:"ttl"` // seconds
+}
+
+// StorageConfig contains storage settings for tenant persistence
+type StorageConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Type     string `yaml:"type"` // "postgres" or "memory"
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	DBName   string `yaml:"dbname"`
+	SSLMode  string `yaml:"sslmode"`
 }
 
 // LoggingConfig contains logging settings
@@ -98,6 +135,17 @@ func setDefaults(cfg *Config) {
 		cfg.Server.IdleTimeout = 120
 	}
 
+	// TLS defaults
+	if cfg.TLS.ListenAddr == "" {
+		cfg.TLS.ListenAddr = ":8443"
+	}
+	if cfg.TLS.CertDir == "" {
+		cfg.TLS.CertDir = "/opt/vinahost-waf/certs"
+	}
+	if cfg.TLS.HTTP01Addr == "" {
+		cfg.TLS.HTTP01Addr = ":80"
+	}
+
 	// Proxy defaults
 	if cfg.Proxy.ProxyTimeout == 0 {
 		cfg.Proxy.ProxyTimeout = 60
@@ -118,6 +166,31 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.WAF.DefaultAction == "" {
 		cfg.WAF.DefaultAction = "block"
+	}
+
+	// Cache defaults
+	if cfg.Cache.Type == "" {
+		cfg.Cache.Type = "memory"
+	}
+	if cfg.Cache.Prefix == "" {
+		cfg.Cache.Prefix = "vinahost-waf:"
+	}
+	if cfg.Cache.TTL == 0 {
+		cfg.Cache.TTL = 300 // 5 minutes
+	}
+
+	// Storage defaults
+	if cfg.Storage.Type == "" {
+		cfg.Storage.Type = "memory"
+	}
+	if cfg.Storage.Port == 0 {
+		cfg.Storage.Port = 5432
+	}
+	if cfg.Storage.DBName == "" {
+		cfg.Storage.DBName = "vinahost_waf"
+	}
+	if cfg.Storage.SSLMode == "" {
+		cfg.Storage.SSLMode = "disable"
 	}
 
 	// Logging defaults

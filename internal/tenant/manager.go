@@ -3,9 +3,12 @@ package tenant
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/vinahost/waf/internal/cache"
+	"github.com/vinahost/waf/internal/storage"
 	"github.com/vinahost/waf/internal/waf"
 	"go.uber.org/zap"
 )
@@ -38,18 +41,22 @@ type TenantConfig struct {
 // TenantManager manages multiple WAF tenants
 type TenantManager struct {
 	mu       sync.RWMutex
-	tenants  map[string]*Tenant          // tenant ID -> tenant
-	domains  map[string]*Tenant          // domain -> tenant
+	tenants  map[string]*Tenant          // tenant ID -> tenant (in-memory cache)
+	domains  map[string]*Tenant          // domain -> tenant (in-memory cache)
 	wafs     map[string]*waf.Engine      // tenant ID -> WAF engine
+	cache    cache.Cache                 // cache for tenant configs
+	storage  storage.Storage             // persistent storage
 	logger   *zap.Logger
 }
 
 // NewTenantManager creates a new tenant manager
-func NewTenantManager(logger *zap.Logger) *TenantManager {
+func NewTenantManager(cache cache.Cache, store storage.Storage, logger *zap.Logger) *TenantManager {
 	return &TenantManager{
 		tenants: make(map[string]*Tenant),
 		domains: make(map[string]*Tenant),
 		wafs:    make(map[string]*waf.Engine),
+		cache:   cache,
+		storage: store,
 		logger:  logger,
 	}
 }
@@ -104,9 +111,35 @@ func (tm *TenantManager) CreateTenant(ctx context.Context, tenant *Tenant) error
 		return fmt.Errorf("failed to create WAF engine: %w", err)
 	}
 
-	// Store tenant
+	// Store tenant in memory
 	tm.tenants[tenant.ID] = tenant
 	tm.wafs[tenant.ID] = wafEngine
+
+	// Persist to storage
+	if tm.storage != nil {
+		if err := tm.storage.SaveTenant(ctx, tenant); err != nil {
+			tm.logger.Error("Failed to persist tenant to storage",
+				zap.String("tenant_id", tenant.ID),
+				zap.Error(err),
+			)
+			// Rollback in-memory changes
+			delete(tm.tenants, tenant.ID)
+			delete(tm.wafs, tenant.ID)
+			wafEngine.Close()
+			return fmt.Errorf("failed to persist tenant: %w", err)
+		}
+	}
+
+	// Cache tenant config
+	if tm.cache != nil {
+		cacheKey := "tenant:" + tenant.ID
+		if err := tm.cache.Set(ctx, cacheKey, tenant); err != nil {
+			tm.logger.Warn("Failed to cache tenant",
+				zap.String("tenant_id", tenant.ID),
+				zap.Error(err),
+			)
+		}
+	}
 
 	// Map domains
 	for _, domain := range tenant.Domains {
@@ -123,16 +156,43 @@ func (tm *TenantManager) CreateTenant(ctx context.Context, tenant *Tenant) error
 }
 
 // GetTenant returns a tenant by ID
-func (tm *TenantManager) GetTenant(tenantID string) (*Tenant, error) {
+func (tm *TenantManager) GetTenant(ctx context.Context, tenantID string) (*Tenant, error) {
+	// Try in-memory cache first
 	tm.mu.RLock()
-	defer tm.mu.RUnlock()
-
 	tenant, exists := tm.tenants[tenantID]
-	if !exists {
-		return nil, fmt.Errorf("tenant %s not found", tenantID)
+	tm.mu.RUnlock()
+	
+	if exists {
+		return tenant, nil
 	}
 
-	return tenant, nil
+	// Try persistent storage
+	if tm.storage != nil {
+		tenant, err := tm.storage.GetTenant(ctx, tenantID)
+		if err == nil {
+			// Load into memory cache
+			tm.mu.Lock()
+			tm.tenants[tenantID] = tenant
+			for _, domain := range tenant.Domains {
+				tm.domains[domain] = tenant
+			}
+			tm.mu.Unlock()
+			
+			// Create WAF engine
+			wafEngine, err := tm.createWAFEngine(tenant)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create WAF engine: %w", err)
+			}
+			
+			tm.mu.Lock()
+			tm.wafs[tenantID] = wafEngine
+			tm.mu.Unlock()
+			
+			return tenant, nil
+		}
+	}
+
+	return nil, fmt.Errorf("tenant %s not found", tenantID)
 }
 
 // GetTenantByDomain returns a tenant by domain
@@ -140,12 +200,29 @@ func (tm *TenantManager) GetTenantByDomain(domain string) (*Tenant, error) {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
+	// Try exact match first
 	tenant, exists := tm.domains[domain]
-	if !exists {
-		return nil, fmt.Errorf("no tenant found for domain %s", domain)
+	if exists {
+		return tenant, nil
 	}
 
-	return tenant, nil
+	// Try wildcard catch-all "*"
+	tenant, exists = tm.domains["*"]
+	if exists {
+		return tenant, nil
+	}
+
+	// Try wildcard match (e.g., *.example.com)
+	parts := strings.Split(domain, ".")
+	if len(parts) > 2 {
+		wildcardDomain := "*." + strings.Join(parts[1:], ".")
+		tenant, exists = tm.domains[wildcardDomain]
+		if exists {
+			return tenant, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no tenant found for domain %s", domain)
 }
 
 // GetWAFEngine returns the WAF engine for a tenant
@@ -168,7 +245,16 @@ func (tm *TenantManager) UpdateTenant(ctx context.Context, tenant *Tenant) error
 
 	existing, exists := tm.tenants[tenant.ID]
 	if !exists {
-		return fmt.Errorf("tenant %s not found", tenant.ID)
+		// Try to load from storage
+		if tm.storage != nil {
+			var err error
+			existing, err = tm.storage.GetTenant(ctx, tenant.ID)
+			if err != nil {
+				return fmt.Errorf("tenant %s not found", tenant.ID)
+			}
+		} else {
+			return fmt.Errorf("tenant %s not found", tenant.ID)
+		}
 	}
 
 	// Remove old domain mappings
@@ -189,9 +275,32 @@ func (tm *TenantManager) UpdateTenant(ctx context.Context, tenant *Tenant) error
 
 	tenant.UpdatedAt = time.Now()
 
-	// Update tenant
+	// Update in memory
 	tm.tenants[tenant.ID] = tenant
 	tm.wafs[tenant.ID] = wafEngine
+
+	// Persist to storage
+	if tm.storage != nil {
+		if err := tm.storage.SaveTenant(ctx, tenant); err != nil {
+			tm.logger.Error("Failed to persist tenant update to storage",
+				zap.String("tenant_id", tenant.ID),
+				zap.Error(err),
+			)
+			return fmt.Errorf("failed to persist tenant update: %w", err)
+		}
+	}
+
+	// Invalidate and update cache
+	if tm.cache != nil {
+		cacheKey := "tenant:" + tenant.ID
+		tm.cache.Delete(ctx, cacheKey)
+		if err := tm.cache.Set(ctx, cacheKey, tenant); err != nil {
+			tm.logger.Warn("Failed to update cache for tenant",
+				zap.String("tenant_id", tenant.ID),
+				zap.Error(err),
+			)
+		}
+	}
 
 	// Map new domains
 	for _, domain := range tenant.Domains {
@@ -207,13 +316,22 @@ func (tm *TenantManager) UpdateTenant(ctx context.Context, tenant *Tenant) error
 }
 
 // DeleteTenant deletes a tenant
-func (tm *TenantManager) DeleteTenant(tenantID string) error {
+func (tm *TenantManager) DeleteTenant(ctx context.Context, tenantID string) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
 	tenant, exists := tm.tenants[tenantID]
 	if !exists {
-		return fmt.Errorf("tenant %s not found", tenantID)
+		// Try to load from storage
+		if tm.storage != nil {
+			var err error
+			tenant, err = tm.storage.GetTenant(ctx, tenantID)
+			if err != nil {
+				return fmt.Errorf("tenant %s not found", tenantID)
+			}
+		} else {
+			return fmt.Errorf("tenant %s not found", tenantID)
+		}
 	}
 
 	// Remove domain mappings
@@ -226,9 +344,31 @@ func (tm *TenantManager) DeleteTenant(tenantID string) error {
 		waf.Close()
 	}
 
-	// Remove tenant
+	// Remove from memory
 	delete(tm.tenants, tenantID)
 	delete(tm.wafs, tenantID)
+
+	// Delete from storage
+	if tm.storage != nil {
+		if err := tm.storage.DeleteTenant(ctx, tenantID); err != nil {
+			tm.logger.Error("Failed to delete tenant from storage",
+				zap.String("tenant_id", tenantID),
+				zap.Error(err),
+			)
+			return fmt.Errorf("failed to delete tenant from storage: %w", err)
+		}
+	}
+
+	// Invalidate cache
+	if tm.cache != nil {
+		cacheKey := "tenant:" + tenantID
+		if err := tm.cache.Delete(ctx, cacheKey); err != nil {
+			tm.logger.Warn("Failed to delete cache for tenant",
+				zap.String("tenant_id", tenantID),
+				zap.Error(err),
+			)
+		}
+	}
 
 	tm.logger.Info("Tenant deleted",
 		zap.String("tenant_id", tenantID),
@@ -238,7 +378,25 @@ func (tm *TenantManager) DeleteTenant(tenantID string) error {
 }
 
 // ListTenants returns all tenants
-func (tm *TenantManager) ListTenants() []*Tenant {
+func (tm *TenantManager) ListTenants(ctx context.Context) []*Tenant {
+	// Try storage first if available
+	if tm.storage != nil {
+		tenants, err := tm.storage.ListTenants(ctx)
+		if err == nil && len(tenants) > 0 {
+			// Update in-memory cache
+			tm.mu.Lock()
+			for _, tenant := range tenants {
+				tm.tenants[tenant.ID] = tenant
+				for _, domain := range tenant.Domains {
+					tm.domains[domain] = tenant
+				}
+			}
+			tm.mu.Unlock()
+			return tenants
+		}
+	}
+
+	// Fallback to in-memory
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
@@ -276,4 +434,9 @@ func (tm *TenantManager) Close() {
 	}
 
 	tm.logger.Info("Tenant manager closed")
+}
+
+// GetCache returns the cache instance
+func (tm *TenantManager) GetCache() cache.Cache {
+	return tm.cache
 }

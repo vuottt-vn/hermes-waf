@@ -4,14 +4,40 @@ services:
   waf:
     build: .
     ports:
-      - "8080:8080"
+      - "9080:9080"
     volumes:
       - ./configs:/app/configs:ro
       - waf-logs:/var/log/vinahost-waf
     environment:
       - LOG_LEVEL=info
     depends_on:
+      - redis
+      - postgres
       - upstream
+    networks:
+      - waf-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - waf-network
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=waf
+      - POSTGRES_PASSWORD=waf_password
+      - POSTGRES_DB=vinahost_waf
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
     networks:
       - waf-network
     restart: unless-stopped
@@ -20,7 +46,7 @@ services:
   upstream:
     image: nginx:alpine
     ports:
-      - "8081:80"
+      - "9081:80"
     volumes:
       - ./test/upstream:/usr/share/nginx/html:ro
     networks:
@@ -29,6 +55,8 @@ services:
 
 volumes:
   waf-logs:
+  redis-data:
+  postgres-data:
 
 networks:
   waf-network:

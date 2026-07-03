@@ -8,10 +8,12 @@ RUN apk add --no-cache git gcc musl-dev
 
 # Copy go mod files
 COPY go.mod go.sum ./
-RUN go mod download
 
 # Copy source code
 COPY . .
+
+# Tidy and download dependencies
+RUN go mod tidy
 
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" -o /waf ./cmd/waf
@@ -31,8 +33,8 @@ RUN adduser -D -g '' wafuser
 COPY --from=builder /waf /app/waf
 COPY configs /app/configs
 
-# Create log directory
-RUN mkdir -p /var/log/vinahost-waf && chown -R wafuser:wafuser /var/log/vinahost-waf
+# Create log directory and certs directory
+RUN mkdir -p /var/log/vinahost-waf /app/certs && chown -R wafuser:wafuser /var/log/vinahost-waf /app/certs
 
 # Switch to non-root user
 USER wafuser
