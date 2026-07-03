@@ -3,25 +3,23 @@ package storage
 import (
 	"context"
 	"sync"
-
-	"github.com/vinahost/waf/internal/tenant"
 )
 
 // MemoryStore implements in-memory storage (for testing/fallback)
 type MemoryStore struct {
 	mu      sync.RWMutex
-	tenants map[string]*tenant.Tenant
+	tenants map[string]*TenantData
 }
 
-// NewMemoryStore creates a new in-memory storage
+// NewMemoryStore creates a new memory storage
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		tenants: make(map[string]*tenant.Tenant),
+		tenants: make(map[string]*TenantData),
 	}
 }
 
 // SaveTenant saves a tenant to memory
-func (s *MemoryStore) SaveTenant(ctx context.Context, t *tenant.Tenant) error {
+func (s *MemoryStore) SaveTenant(ctx context.Context, t *TenantData) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tenants[t.ID] = t
@@ -29,23 +27,21 @@ func (s *MemoryStore) SaveTenant(ctx context.Context, t *tenant.Tenant) error {
 }
 
 // GetTenant retrieves a tenant by ID
-func (s *MemoryStore) GetTenant(ctx context.Context, id string) (*tenant.Tenant, error) {
+func (s *MemoryStore) GetTenant(ctx context.Context, id string) (*TenantData, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
-	t, exists := s.tenants[id]
-	if !exists {
-		return nil, &NotFoundError{ID: id}
+	t, ok := s.tenants[id]
+	if !ok {
+		return nil, ErrTenantNotFound
 	}
 	return t, nil
 }
 
 // ListTenants retrieves all tenants
-func (s *MemoryStore) ListTenants(ctx context.Context) ([]*tenant.Tenant, error) {
+func (s *MemoryStore) ListTenants(ctx context.Context) ([]*TenantData, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
-	tenants := make([]*tenant.Tenant, 0, len(s.tenants))
+	tenants := make([]*TenantData, 0, len(s.tenants))
 	for _, t := range s.tenants {
 		tenants = append(tenants, t)
 	}
@@ -56,9 +52,8 @@ func (s *MemoryStore) ListTenants(ctx context.Context) ([]*tenant.Tenant, error)
 func (s *MemoryStore) DeleteTenant(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
-	if _, exists := s.tenants[id]; !exists {
-		return &NotFoundError{ID: id}
+	if _, ok := s.tenants[id]; !ok {
+		return ErrTenantNotFound
 	}
 	delete(s.tenants, id)
 	return nil
@@ -69,11 +64,5 @@ func (s *MemoryStore) Close() error {
 	return nil
 }
 
-// NotFoundError represents a tenant not found error
-type NotFoundError struct {
-	ID string
-}
-
-func (e *NotFoundError) Error() string {
-	return "tenant not found: " + e.ID
-}
+// Ensure MemoryStore implements Storage interface
+var _ Storage = (*MemoryStore)(nil)

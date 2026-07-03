@@ -117,7 +117,8 @@ func (tm *TenantManager) CreateTenant(ctx context.Context, tenant *Tenant) error
 
 	// Persist to storage
 	if tm.storage != nil {
-		if err := tm.storage.SaveTenant(ctx, tenant); err != nil {
+		tenantData := tenant.ToTenantData()
+		if err := tm.storage.SaveTenant(ctx, tenantData); err != nil {
 			tm.logger.Error("Failed to persist tenant to storage",
 				zap.String("tenant_id", tenant.ID),
 				zap.Error(err),
@@ -168,8 +169,9 @@ func (tm *TenantManager) GetTenant(ctx context.Context, tenantID string) (*Tenan
 
 	// Try persistent storage
 	if tm.storage != nil {
-		tenant, err := tm.storage.GetTenant(ctx, tenantID)
+		tenantData, err := tm.storage.GetTenant(ctx, tenantID)
 		if err == nil {
+			tenant := FromTenantData(tenantData)
 			// Load into memory cache
 			tm.mu.Lock()
 			tm.tenants[tenantID] = tenant
@@ -248,10 +250,11 @@ func (tm *TenantManager) UpdateTenant(ctx context.Context, tenant *Tenant) error
 		// Try to load from storage
 		if tm.storage != nil {
 			var err error
-			existing, err = tm.storage.GetTenant(ctx, tenant.ID)
+			tenantData, err := tm.storage.GetTenant(ctx, tenant.ID)
 			if err != nil {
 				return fmt.Errorf("tenant %s not found", tenant.ID)
 			}
+			existing = FromTenantData(tenantData)
 		} else {
 			return fmt.Errorf("tenant %s not found", tenant.ID)
 		}
@@ -281,7 +284,8 @@ func (tm *TenantManager) UpdateTenant(ctx context.Context, tenant *Tenant) error
 
 	// Persist to storage
 	if tm.storage != nil {
-		if err := tm.storage.SaveTenant(ctx, tenant); err != nil {
+		tenantData := tenant.ToTenantData()
+		if err := tm.storage.SaveTenant(ctx, tenantData); err != nil {
 			tm.logger.Error("Failed to persist tenant update to storage",
 				zap.String("tenant_id", tenant.ID),
 				zap.Error(err),
@@ -325,10 +329,11 @@ func (tm *TenantManager) DeleteTenant(ctx context.Context, tenantID string) erro
 		// Try to load from storage
 		if tm.storage != nil {
 			var err error
-			tenant, err = tm.storage.GetTenant(ctx, tenantID)
+			tenantData, err := tm.storage.GetTenant(ctx, tenantID)
 			if err != nil {
 				return fmt.Errorf("tenant %s not found", tenantID)
 			}
+			tenant = FromTenantData(tenantData)
 		} else {
 			return fmt.Errorf("tenant %s not found", tenantID)
 		}
@@ -381,11 +386,14 @@ func (tm *TenantManager) DeleteTenant(ctx context.Context, tenantID string) erro
 func (tm *TenantManager) ListTenants(ctx context.Context) []*Tenant {
 	// Try storage first if available
 	if tm.storage != nil {
-		tenants, err := tm.storage.ListTenants(ctx)
-		if err == nil && len(tenants) > 0 {
-			// Update in-memory cache
+		tenantsData, err := tm.storage.ListTenants(ctx)
+		if err == nil && len(tenantsData) > 0 {
+			// Convert and update in-memory cache
+			tenants := make([]*Tenant, 0, len(tenantsData))
 			tm.mu.Lock()
-			for _, tenant := range tenants {
+			for _, tenantData := range tenantsData {
+				tenant := FromTenantData(tenantData)
+				tenants = append(tenants, tenant)
 				tm.tenants[tenant.ID] = tenant
 				for _, domain := range tenant.Domains {
 					tm.domains[domain] = tenant

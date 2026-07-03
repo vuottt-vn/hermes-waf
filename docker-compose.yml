@@ -4,16 +4,16 @@ services:
   waf:
     build: .
     ports:
-      - "9080:9080"
+      - "9080:8080"
     volumes:
       - ./configs:/app/configs:ro
       - waf-logs:/var/log/vinahost-waf
+      - waf-certs:/app/certs
     environment:
       - LOG_LEVEL=info
     depends_on:
       - redis
       - postgres
-      - upstream
     networks:
       - waf-network
     restart: unless-stopped
@@ -55,6 +55,7 @@ services:
 
 volumes:
   waf-logs:
+  waf-certs:
   redis-data:
   postgres-data:
 

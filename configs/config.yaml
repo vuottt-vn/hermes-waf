@@ -30,6 +30,10 @@ waf:
   debug_log_level: 0
   default_action: "block"  # "block" or "log"
 
+tls:
+  enabled: false
+  cert_dir: "/app/certs"
+
 cache:
   enabled: true
   type: "redis"       # "redis" or "memory"

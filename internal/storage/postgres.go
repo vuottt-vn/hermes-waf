@@ -5,10 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	_ "github.com/lib/pq"
-	"github.com/vinahost/waf/internal/tenant"
 )
 
 // PostgresStore implements persistent storage using PostgreSQL
@@ -60,10 +58,10 @@ func (s *PostgresStore) migrate() error {
 }
 
 // SaveTenant saves a tenant to database
-func (s *PostgresStore) SaveTenant(ctx context.Context, t *tenant.Tenant) error {
+func (s *PostgresStore) SaveTenant(ctx context.Context, t *TenantData) error {
 	domains := fmt.Sprintf("{%s}", joinStrings(t.Domains))
 	rules := fmt.Sprintf("{%s}", joinStrings(t.Rules))
-	
+
 	configJSON, err := json.Marshal(t.Config)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
@@ -96,8 +94,8 @@ func (s *PostgresStore) SaveTenant(ctx context.Context, t *tenant.Tenant) error 
 }
 
 // GetTenant retrieves a tenant by ID
-func (s *PostgresStore) GetTenant(ctx context.Context, id string) (*tenant.Tenant, error) {
-	var t tenant.Tenant
+func (s *PostgresStore) GetTenant(ctx context.Context, id string) (*TenantData, error) {
+	var t TenantData
 	var domains, rules []string
 	var configJSON, metadataJSON []byte
 
@@ -112,7 +110,7 @@ func (s *PostgresStore) GetTenant(ctx context.Context, id string) (*tenant.Tenan
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("tenant not found")
+		return nil, ErrTenantNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -133,7 +131,7 @@ func (s *PostgresStore) GetTenant(ctx context.Context, id string) (*tenant.Tenan
 }
 
 // ListTenants retrieves all tenants
-func (s *PostgresStore) ListTenants(ctx context.Context) ([]*tenant.Tenant, error) {
+func (s *PostgresStore) ListTenants(ctx context.Context) ([]*TenantData, error) {
 	query := `
 		SELECT id, name, domains, enabled, rules, config, metadata, created_at, updated_at
 		FROM tenants ORDER BY created_at DESC
@@ -145,9 +143,9 @@ func (s *PostgresStore) ListTenants(ctx context.Context) ([]*tenant.Tenant, erro
 	}
 	defer rows.Close()
 
-	var tenants []*tenant.Tenant
+	var tenants []*TenantData
 	for rows.Next() {
-		var t tenant.Tenant
+		var t TenantData
 		var domains, rules []string
 		var configJSON, metadataJSON []byte
 
@@ -189,7 +187,7 @@ func (s *PostgresStore) DeleteTenant(ctx context.Context, id string) error {
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("tenant not found")
+		return ErrTenantNotFound
 	}
 
 	return nil
@@ -210,4 +208,16 @@ func joinStrings(strs []string) string {
 		result += fmt.Sprintf(`"%s"`, s)
 	}
 	return result
+}
+
+// Ensure PostgresStore implements Storage interface
+var _ Storage = (*PostgresStore)(nil)
+
+// NotFoundError represents a not found error
+type NotFoundError struct {
+	ID string
+}
+
+func (e *NotFoundError) Error() string {
+	return fmt.Sprintf("tenant not found: %s", e.ID)
 }
